@@ -57,11 +57,6 @@ Paste your API keys in the setup modal when the app loads. Or click **"Demo Mode
 
 ---
 
-## 📸 Screenshots
-
-> Dashboard with live weather, map, and flood monitoring panels.
-
----
 
 ## 🗺️ Supported Rivers
 
