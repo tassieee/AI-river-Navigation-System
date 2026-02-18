@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>নদী নেভিগেটর AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Tiro+Bangla:ital@0;1&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg:       #030b14;
+    --surface:  #071524;
+    --border:   rgba(0,200,160,0.18);
+    --teal:     #00c8a0;
+    --teal2:    #00a3d4;
+    --warn:     #f0a500;
+    --danger:   #e84040;
+    --text:     #d8eef8;
+    --muted:    rgba(216,238,248,0.45);
+    --font-bn:  'Tiro Bangla', serif;
+    --font-mono:'JetBrains Mono', monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin:0; padding:0; }
+  html, body { height:100%; background:var(--bg); color:var(--text); font-family:var(--font-bn); overflow:hidden; }
+
+  /* ── scrollbar ── */
+  ::-webkit-scrollbar { width:4px; height:4px; }
+  ::-webkit-scrollbar-thumb { background:rgba(0,200,160,0.3); border-radius:2px; }
+
+  /* ── animations ── */
+  @keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.25} }
+  @keyframes spin   { to{transform:rotate(360deg)} }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes wave   { 0%{background-position:0 50%} 100%{background-position:200% 50%} }
+  @keyframes glow   { 0%,100%{box-shadow:0 0 8px rgba(0,200,160,.3)} 50%{box-shadow:0 0 22px rgba(0,200,160,.7)} }
+
+  /* ── layout ── */
+  #app { display:grid; grid-template-rows:56px 1fr; height:100vh; }
+
+  /* ── header ── */
+  header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 20px; border-bottom:1px solid var(--border);
+    background:rgba(3,11,20,.9); backdrop-filter:blur(14px);
+    position:relative; z-index:200;
+  }
+  .logo { display:flex; align-items:center; gap:10px; }
+  .logo-icon {
+    width:34px; height:34px; border-radius:9px;
+    background:linear-gradient(135deg,var(--teal),var(--teal2));
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; animation:glow 3s ease-in-out infinite;
+  }
+  .logo-title { font-family:var(--font-mono); font-size:15px; font-weight:700; color:var(--teal); letter-spacing:.5px; }
+  .logo-sub   { font-size:10px; color:rgba(0,200,160,.5); letter-spacing:2px; text-transform:uppercase; }
+  .live-badge {
+    display:flex; align-items:center; gap:6px; font-size:11px;
+    color:var(--teal); padding:4px 10px; border:1px solid var(--border);
+    border-radius:20px; font-family:var(--font-mono);
+  }
+  .live-dot { width:7px; height:7px; border-radius:50%; background:var(--teal); animation:pulse 2s infinite; }
+
+  /* ── main split ── */
+  main { display:grid; grid-template-columns:300px 1fr; overflow:hidden; }
+
+  /* ── sidebar ── */
+  #sidebar {
+    border-right:1px solid var(--border);
+    display:flex; flex-direction:column;
+    overflow:hidden; background:var(--surface);
+  }
+  .nav-tabs { display:flex; border-bottom:1px solid var(--border); }
+  .nav-tab {
+    flex:1; padding:10px 4px; font-size:11px; text-align:center;
+    border:none; background:transparent; color:var(--muted);
+    cursor:pointer; transition:all .2s; font-family:var(--font-bn);
+    border-bottom:2px solid transparent;
+  }
+  .nav-tab.active { color:var(--teal); border-bottom-color:var(--teal); background:rgba(0,200,160,.06); }
+  .nav-tab:hover:not(.active) { color:var(--text); background:rgba(255,255,255,.03); }
+
+  .tab-panel { display:none; flex-direction:column; overflow-y:auto; flex:1; padding:14px; }
+  .tab-panel.active { display:flex; animation:fadeUp .3s ease; }
+
+  /* ── cards ── */
+  .card {
+    background:rgba(0,200,160,.04); border:1px solid var(--border);
+    border-radius:12px; padding:14px; margin-bottom:12px;
+    transition:border-color .2s;
+  }
+  .card:hover { border-color:rgba(0,200,160,.35); }
+  .card-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:rgba(0,200,160,.55); margin-bottom:10px; font-family:var(--font-mono); }
+  .big-val { font-size:28px; font-weight:700; color:var(--teal); font-family:var(--font-mono); }
+  .stat-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(0,200,160,.07); font-size:13px; }
+  .stat-row:last-child { border-bottom:none; }
+  .stat-label { color:var(--muted); }
+  .stat-val   { font-weight:700; font-family:var(--font-mono); font-size:12px; }
+
+  /* ── form inputs ── */
+  label { font-size:11px; color:rgba(0,200,160,.6); display:block; margin-bottom:5px; letter-spacing:1px; text-transform:uppercase; }
+  input, select, textarea {
+    width:100%; background:rgba(0,200,160,.07); border:1px solid var(--border);
+    border-radius:8px; padding:9px 12px; color:var(--text); font-size:13px;
+    font-family:var(--font-bn); outline:none; transition:border-color .2s;
+    margin-bottom:10px;
+  }
+  input:focus, select:focus, textarea:focus { border-color:rgba(0,200,160,.5); }
+  select option { background:var(--surface); }
+
+  .btn {
+    padding:9px 18px; border-radius:8px; border:none; cursor:pointer;
+    font-weight:700; font-size:13px; font-family:var(--font-bn);
+    transition:all .2s; width:100%;
+  }
+  .btn-primary { background:linear-gradient(135deg,var(--teal),var(--teal2)); color:#030b14; }
+  .btn-primary:hover { opacity:.85; transform:translateY(-1px); }
+  .btn-secondary { background:rgba(0,200,160,.12); color:var(--teal); border:1px solid var(--border); }
+  .btn-secondary:hover { background:rgba(0,200,160,.2); }
+
+  /* ── weather ── */
+  .weather-big { text-align:center; padding:10px 0; }
+  .weather-icon { font-size:52px; display:block; margin-bottom:6px; }
+  .weather-desc { font-size:15px; font-weight:600; }
+  .weather-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .weather-cell { background:rgba(0,200,160,.05); border-radius:8px; padding:8px; text-align:center; }
+  .weather-cell-label { font-size:10px; color:var(--muted); margin-bottom:4px; }
+  .weather-cell-val { font-size:14px; font-weight:700; font-family:var(--font-mono); }
+
+  /* ── flood bar ── */
+  .flood-bar-track { height:10px; border-radius:5px; background:rgba(255,255,255,.08); overflow:hidden; margin:8px 0; }
+  .flood-bar-fill  { height:100%; border-radius:5px; transition:width .8s ease; }
+
+  /* ── alert ── */
+  .alert { border-radius:10px; padding:10px 14px; margin-bottom:12px; font-size:13px; display:flex; align-items:flex-start; gap:8px; animation:fadeUp .3s ease; }
+  .alert-warn   { background:rgba(240,165,0,.1); border:1px solid rgba(240,165,0,.35); color:#ffc948; }
+  .alert-danger { background:rgba(232,64,64,.1);  border:1px solid rgba(232,64,64,.35);  color:#ff7f7f; }
+  .alert-ok     { background:rgba(0,200,160,.1);  border:1px solid rgba(0,200,160,.35);  color:var(--teal); }
+
+  /* ── map panel ── */
+  #map-panel { position:relative; display:flex; flex-direction:column; overflow:hidden; }
+  #map { flex:1; z-index:1; }
+  .map-overlay {
+    position:absolute; top:12px; right:12px; z-index:400;
+    display:flex; flex-direction:column; gap:8px; pointer-events:none;
+  }
+  .map-info-card {
+    background:rgba(3,11,20,.88); border:1px solid var(--border);
+    border-radius:10px; padding:10px 14px; font-size:12px;
+    backdrop-filter:blur(10px); pointer-events:all; min-width:160px;
+  }
+  .map-info-title { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:rgba(0,200,160,.55); margin-bottom:6px; font-family:var(--font-mono); }
+
+  /* ── chat ── */
+  #chat-messages { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:12px; }
+  .msg { max-width:88%; padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.65; animation:fadeUp .25s ease; }
+  .msg-ai   { align-self:flex-start; background:rgba(0,200,160,.1); border:1px solid rgba(0,200,160,.2); border-radius:4px 12px 12px 12px; }
+  .msg-user { align-self:flex-end;   background:rgba(0,163,212,.13); border:1px solid rgba(0,163,212,.25); border-radius:12px 4px 12px 12px; }
+  .msg-time { font-size:10px; color:var(--muted); margin-top:4px; font-family:var(--font-mono); }
+  .typing-dots span { animation:pulse 1.2s infinite; display:inline-block; }
+  .typing-dots span:nth-child(2) { animation-delay:.2s; }
+  .typing-dots span:nth-child(3) { animation-delay:.4s; }
+
+  .chat-input-row { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--border); }
+  .chat-input-row input { margin-bottom:0; flex:1; }
+  .chat-send { padding:9px 16px; border-radius:8px; background:linear-gradient(135deg,var(--teal),var(--teal2)); border:none; color:#030b14; font-weight:700; cursor:pointer; font-size:13px; white-space:nowrap; }
+  .chat-send:hover { opacity:.85; }
+
+  .quick-chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 12px 0; }
+  .chip { padding:5px 10px; border-radius:20px; background:rgba(0,200,160,.1); border:1px solid var(--border); font-size:11px; color:var(--teal); cursor:pointer; font-family:var(--font-bn); transition:all .2s; }
+  .chip:hover { background:rgba(0,200,160,.2); }
+
+  /* ── status bar ── */
+  #statusbar {
+    grid-column:1/-1; border-top:1px solid var(--border);
+    display:flex; gap:20px; align-items:center;
+    padding:0 16px; font-size:11px; color:var(--muted);
+    font-family:var(--font-mono); background:rgba(3,11,20,.9);
+    height:28px; flex-shrink:0;
+  }
+  .sb-item { display:flex; align-items:center; gap:5px; }
+  .sb-dot  { width:6px; height:6px; border-radius:50%; }
+
+  /* ── loading spinner ── */
+  .spinner { width:18px; height:18px; border:2px solid rgba(0,200,160,.2); border-top-color:var(--teal); border-radius:50%; animation:spin .7s linear infinite; display:inline-block; vertical-align:middle; margin-right:6px; }
+
+  /* ── API key setup ── */
+  #setup-modal {
+    position:fixed; inset:0; background:rgba(3,11,20,.97);
+    z-index:1000; display:flex; align-items:center; justify-content:center;
+    backdrop-filter:blur(8px);
+  }
+  .setup-box {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:32px; max-width:480px; width:90%;
+    animation:fadeUp .4s ease;
+  }
+  .setup-title { font-size:22px; font-weight:700; color:var(--teal); margin-bottom:8px; }
+  .setup-sub   { font-size:13px; color:var(--muted); margin-bottom:24px; line-height:1.7; }
+  .setup-step  { display:flex; gap:10px; margin-bottom:14px; align-items:flex-start; }
+  .step-num    { width:24px; height:24px; border-radius:50%; background:rgba(0,200,160,.2); border:1px solid var(--teal); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:var(--teal); flex-shrink:0; margin-top:2px; }
+  .step-text   { font-size:13px; color:var(--muted); line-height:1.6; }
+  .step-text a { color:var(--teal); }
+
+  /* route result */
+  .route-result { background:rgba(0,200,160,.06); border:1px solid rgba(0,200,160,.2); border-radius:10px; padding:12px; }
+  .route-point  { display:flex; align-items:center; gap:8px; padding:6px 0; }
+  .route-dot    { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .route-line   { width:2px; height:20px; background:rgba(0,200,160,.3); margin-left:4px; }
+
+  /* safe badge */
+  .safe-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:700; margin-top:10px; }
+
+  /* responsive for smaller screens */
+  @media (max-width: 700px) {
+    main { grid-template-columns:1fr; grid-template-rows:auto 1fr; }
+    #sidebar { max-height:50vh; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── API Key Setup Modal ── -->
+<div id="setup-modal">
+  <div class="setup-box">
+    <div class="logo" style="margin-bottom:20px">
+      <div class="logo-icon">🚢</div>
+      <div>
+        <div class="logo-title">নদী নেভিগেটর AI</div>
+        <div class="logo-sub">Real API Setup</div>
+      </div>
+    </div>
+    <div class="setup-title">API Key সেটআপ করুন</div>
+    <div class="setup-sub">
+      এই প্রজেক্টে real আবহাওয়া ও AI চ্যাট কাজ করতে নিচের API keys দরকার। দুটোই সম্পূর্ণ ফ্রি!
+    </div>
+
+    <div class="setup-step">
+      <div class="step-num">১</div>
+      <div class="step-text">
+        <strong style="color:var(--text)">OpenWeatherMap API Key</strong><br/>
+        <a href="https://openweathermap.org/api" target="_blank">openweathermap.org</a> এ ফ্রি account করুন → API keys → Copy করুন
+      </div>
+    </div>
+    <div style="margin-bottom:14px">
+      <label>OpenWeatherMap API Key</label>
+      <input id="owm-key" type="text" placeholder="আপনার API key এখানে দিন..." />
+    </div>
+
+    <div class="setup-step">
+      <div class="step-num">২</div>
+      <div class="step-text">
+        <strong style="color:var(--text)">Anthropic Claude API Key</strong><br/>
+        <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> → Get API Keys → Create Key
+      </div>
+    </div>
+    <div style="margin-bottom:20px">
+      <label>Anthropic API Key</label>
+      <input id="claude-key" type="password" placeholder="sk-ant-..." />
+    </div>
+
+    <button class="btn btn-primary" onclick="setupKeys()" style="margin-bottom:10px">
+      🚀 শুরু করুন
+    </button>
+    <button class="btn btn-secondary" onclick="skipSetup()">
+      Demo মোডে চালু করুন (API ছাড়া)
+    </button>
+  </div>
+</div>
+
+<!-- ── App ── -->
+<div id="app">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🚢</div>
+      <div>
+        <div class="logo-title">নদী নেভিগেটর AI</div>
+        <div class="logo-sub">River Navigation Assistant</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <div id="mode-badge" class="live-badge">
+        <div class="live-dot"></div>
+        <span id="mode-label">লোড হচ্ছে...</span>
+      </div>
+      <select id="river-select" style="width:auto;margin:0;font-size:12px;padding:5px 10px" onchange="onRiverChange()">
+        <option value="23.7,90.1">পদ্মা নদী</option>
+        <option value="23.3,90.6">মেঘনা নদী</option>
+        <option value="24.5,89.8">যমুনা নদী</option>
+        <option value="24.9,91.9">সুরমা নদী</option>
+        <option value="25.3,83.0">গঙ্গা নদী</option>
+        <option value="26.1,91.7">ব্রহ্মপুত্র নদী</option>
+        <option value="23.8,90.4">বুড়িগঙ্গা নদী</option>
+        <option value="22.3,91.8">কর্ণফুলী নদী</option>
+      </select>
+    </div>
+  </header>
+
+  <main>
+    <!-- ── Sidebar ── -->
+    <div id="sidebar">
+      <div class="nav-tabs">
+        <button class="nav-tab active" onclick="switchTab('weather',this)">🌤️ আবহাওয়া</button>
+        <button class="nav-tab" onclick="switchTab('route',this)">🚢 রুট</button>
+        <button class="nav-tab" onclick="switchTab('flood',this)">🌊 বন্যা</button>
+        <button class="nav-tab" onclick="switchTab('chat',this)">🤖 AI</button>
+      </div>
+
+      <!-- Weather Panel -->
+      <div id="tab-weather" class="tab-panel active">
+        <div id="weather-loading" class="card" style="text-align:center;padding:24px">
+          <div class="spinner"></div> আবহাওয়া লোড হচ্ছে...
+        </div>
+        <div id="weather-content" style="display:none">
+          <div class="card">
+            <div class="card-title">বর্তমান আবহাওয়া</div>
+            <div class="weather-big">
+              <span class="weather-icon" id="w-icon">⛅</span>
+              <div class="weather-desc" id="w-desc">—</div>
+              <div style="font-size:32px;font-weight:800;color:var(--teal);font-family:var(--font-mono);margin-top:6px" id="w-temp">—</div>
+            </div>
+            <div class="weather-grid">
+              <div class="weather-cell">
+                <div class="weather-cell-label">💨 বাতাস</div>
+                <div class="weather-cell-val" id="w-wind">—</div>
+              </div>
+              <div class="weather-cell">
+                <div class="weather-cell-label">💧 আর্দ্রতা</div>
+                <div class="weather-cell-val" id="w-humidity">—</div>
+              </div>
+              <div class="weather-cell">
+                <div class="weather-cell-label">👁️ দৃশ্যমানতা</div>
+                <div class="weather-cell-val" id="w-vis">—</div>
+              </div>
+              <div class="weather-cell">
+                <div class="weather-cell-label">🌡️ অনুভূত</div>
+                <div class="weather-cell-val" id="w-feels">—</div>
+              </div>
+            </div>
+            <div id="w-safe-badge"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">৫ দিনের পূর্বাভাস</div>
+            <div id="forecast-list"></div>
+          </div>
+
+          <div id="weather-alert-box"></div>
+        </div>
+      </div>
+
+      <!-- Route Panel -->
+      <div id="tab-route" class="tab-panel">
+        <div class="card">
+          <div class="card-title">রুট পরিকল্পনা</div>
+          <label>শুরু পয়েন্ট</label>
+          <input id="route-from" type="text" placeholder="যেমন: আরিচা ঘাট" />
+          <label>গন্তব্য পয়েন্ট</label>
+          <input id="route-to" type="text" placeholder="যেমন: মাওয়া ঘাট" />
+          <label>যানবাহন</label>
+          <select id="vessel-type">
+            <option>ট্রলার</option>
+            <option>স্টিমার</option>
+            <option>ফেরি</option>
+            <option>স্পিডবোট</option>
+            <option>কার্গো জাহাজ</option>
+          </select>
+          <label>যাত্রার সময়</label>
+          <select id="depart-time">
+            <option>এখনই</option>
+            <option>ভোর ৬টা</option>
+            <option>সকাল ৯টা</option>
+            <option>দুপুর ১২টা</option>
+            <option>বিকেল ৩টা</option>
+            <option>সন্ধ্যা ৬টা</option>
+          </select>
+          <button class="btn btn-primary" onclick="planRoute()" id="route-btn">🗺️ রুট বিশ্লেষণ করুন</button>
+        </div>
+        <div id="route-result" style="display:none" class="card">
+          <div class="card-title">রুট রিপোর্ট</div>
+          <div id="route-result-content"></div>
+        </div>
+      </div>
+
+      <!-- Flood Panel -->
+      <div id="tab-flood" class="tab-panel">
+        <div class="card">
+          <div class="card-title">বন্যা পরিস্থিতি</div>
+          <div id="flood-status">
+            <div class="spinner"></div> ডেটা লোড হচ্ছে...
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">পানির স্তর পর্যবেক্ষণ</div>
+          <div id="flood-gauge"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">নিরাপত্তা নির্দেশিকা</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.8" id="safety-tips">
+            ✅ যাত্রার আগে আবহাওয়া পরীক্ষা করুন<br/>
+            ✅ লাইফ জ্যাকেট পরিধান নিশ্চিত করুন<br/>
+            ✅ পরিবারকে রুট জানিয়ে বের হন<br/>
+            ✅ চার্জযুক্ত মোবাইল সঙ্গে রাখুন<br/>
+            ✅ জরুরি: কোস্ট গার্ড ☎ ১৮১২৪<br/>
+            ✅ বন্যা সতর্কতা: FFWC ☎ ০২-৯৫৫৩৮৬৪
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Panel -->
+      <div id="tab-chat" class="tab-panel" style="padding:0;gap:0">
+        <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:rgba(0,200,160,.04)">
+          <div style="width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--teal),var(--teal2));display:flex;align-items:center;justify-content:center;font-size:15px">🤖</div>
+          <div>
+            <div style="font-weight:700;font-size:13px;color:var(--teal)">নেভিগেটর AI</div>
+            <div id="ai-status" style="font-size:10px;color:var(--muted)">প্রস্তুত</div>
+          </div>
+        </div>
+        <div id="chat-messages">
+          <div class="msg msg-ai">
+            🤖 আস্সালামুয়ালাইকুম! আমি আপনার নদী নেভিগেশন সহকারী।<br/><br/>
+            আবহাওয়া, বন্যা, রুট পরিকল্পনা বা নিরাপত্তা — যেকোনো বিষয়ে জিজ্ঞেস করুন!
+            <div class="msg-time">এইমাত্র</div>
+          </div>
+        </div>
+        <div class="quick-chips">
+          <div class="chip" onclick="sendChip('আজকের আবহাওয়া কেমন?')">আজকের আবহাওয়া?</div>
+          <div class="chip" onclick="sendChip('বন্যার ঝুঁকি কেমন?')">বন্যার ঝুঁকি?</div>
+          <div class="chip" onclick="sendChip('নিরাপদ রুট বলুন')">নিরাপদ রুট</div>
+          <div class="chip" onclick="sendChip('রাতে চলাচল কি নিরাপদ?')">রাতে চলাচল?</div>
+        </div>
+        <div class="chat-input-row">
+          <input id="chat-input" type="text" placeholder="প্রশ্ন করুন..." onkeydown="if(event.key==='Enter')sendChat()" style="margin:0"/>
+          <button class="chat-send" onclick="sendChat()">পাঠান ➤</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Map Panel ── -->
+    <div id="map-panel">
+      <div id="map"></div>
+      <div class="map-overlay">
+        <div class="map-info-card">
+          <div class="map-info-title">নির্বাচিত এলাকা</div>
+          <div id="map-river-name" style="font-weight:700;color:var(--teal);font-size:14px">পদ্মা নদী</div>
+          <div id="map-coords" style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:3px">23.7°N, 90.1°E</div>
+        </div>
+        <div class="map-info-card">
+          <div class="map-info-title">মানচিত্র স্তর</div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="btn btn-secondary" style="padding:5px;font-size:11px;width:100%" onclick="setMapLayer('street')">🗺️ সড়ক</button>
+            <button class="btn btn-secondary" style="padding:5px;font-size:11px;width:100%" onclick="setMapLayer('satellite')">🛰️ স্যাটেলাইট</button>
+            <button class="btn btn-secondary" style="padding:5px;font-size:11px;width:100%" onclick="setMapLayer('topo')">🏔️ টপো</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Status Bar -->
+  <div id="statusbar">
+    <div class="sb-item"><div class="sb-dot" style="background:var(--teal)"></div><span id="sb-weather">আবহাওয়া: —</span></div>
+    <div class="sb-item"><div class="sb-dot" id="sb-api-dot" style="background:var(--warn)"></div><span id="sb-api">API: সংযোগ হচ্ছে...</span></div>
+    <div class="sb-item">🕐 <span id="sb-time">—</span></div>
+    <div class="sb-item" style="margin-left:auto">নদী নেভিগেটর AI v2.0</div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let OWM_KEY = '';
+let CLAUDE_KEY = '';
+let DEMO_MODE = false;
+let currentLat = 23.7, currentLng = 90.1;
+let currentWeather = null;
+let map, tileLayer, riverMarker;
+
+// ── Setup ──────────────────────────────────────────────────────────────────
+function setupKeys() {
+  OWM_KEY    = document.getElementById('owm-key').value.trim();
+  CLAUDE_KEY = document.getElementById('claude-key').value.trim();
+  if (!OWM_KEY && !CLAUDE_KEY) { alert('অন্তত একটি API key দিন, অথবা Demo মোড ব্যবহার করুন।'); return; }
+  document.getElementById('setup-modal').style.display = 'none';
+  init();
+}
+
+function skipSetup() {
+  DEMO_MODE = true;
+  document.getElementById('setup-modal').style.display = 'none';
+  document.getElementById('mode-label').textContent = 'Demo মোড';
+  document.getElementById('sb-api').textContent = 'API: Demo মোড';
+  document.getElementById('sb-api-dot').style.background = '#f0a500';
+  init();
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+function init() {
+  initMap();
+  updateClock();
+  setInterval(updateClock, 1000);
+  loadWeather();
+  loadFlood();
+}
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('sb-time').textContent =
+    now.toLocaleTimeString('bn-BD', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+// ── Map ────────────────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { zoomControl:true, attributionControl:true }).setView([currentLat, currentLng], 10);
+  tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© OpenStreetMap contributors', maxZoom:19
+  }).addTo(map);
+  addRiverMarker();
+}
+
+function addRiverMarker() {
+  if (riverMarker) map.removeLayer(riverMarker);
+  const icon = L.divIcon({
+    html:`<div style="background:linear-gradient(135deg,#00c8a0,#00a3d4);width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;border:2px solid #fff;box-shadow:0 0 16px rgba(0,200,160,.6)">🚢</div>`,
+    className:'', iconSize:[36,36], iconAnchor:[18,18]
+  });
+  riverMarker = L.marker([currentLat, currentLng], { icon }).addTo(map)
+    .bindPopup(`<b style="color:#00c8a0">${getRiverName()}</b><br/>${currentLat.toFixed(4)}°N, ${currentLng.toFixed(4)}°E`);
+}
+
+function setMapLayer(type) {
+  map.removeLayer(tileLayer);
+  const urls = {
+    street:    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    topo:      'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+  };
+  tileLayer = L.tileLayer(urls[type], { maxZoom:18, attribution:'© Map contributors' }).addTo(map);
+}
+
+function onRiverChange() {
+  const sel = document.getElementById('river-select');
+  const [lat, lng] = sel.value.split(',').map(Number);
+  currentLat = lat; currentLng = lng;
+  map.flyTo([lat, lng], 10, { duration:1.5 });
+  addRiverMarker();
+  document.getElementById('map-river-name').textContent = getRiverName();
+  document.getElementById('map-coords').textContent = `${lat}°N, ${lng}°E`;
+  loadWeather();
+  loadFlood();
+}
+
+function getRiverName() {
+  return document.getElementById('river-select').options[document.getElementById('river-select').selectedIndex].text;
+}
+
+// ── Weather ────────────────────────────────────────────────────────────────
+async function loadWeather() {
+  document.getElementById('weather-loading').style.display = 'block';
+  document.getElementById('weather-content').style.display = 'none';
+
+  if (DEMO_MODE || !OWM_KEY) { renderDemoWeather(); return; }
+
+  try {
+    const res  = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${currentLat}&lon=${currentLng}&appid=${OWM_KEY}&units=metric&lang=bn`);
+    const data = await res.json();
+    if (data.cod !== 200) throw new Error(data.message);
+
+    currentWeather = data;
+    const fc = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${currentLat}&lon=${currentLng}&appid=${OWM_KEY}&units=metric&lang=bn`);
+    const fcData = await fc.json();
+    renderWeather(data, fcData);
+    updateStatusBar(data);
+    document.getElementById('sb-api').textContent    = 'API: সংযুক্ত ✓';
+    document.getElementById('sb-api-dot').style.background = '#00c8a0';
+    document.getElementById('mode-label').textContent = 'লাইভ ডেটা';
+  } catch(e) {
+    console.error(e);
+    renderDemoWeather();
+    document.getElementById('sb-api').textContent = 'API: ত্রুটি — Demo মোড';
+  }
+}
+
+function weatherIcon(code) {
+  if (!code) return '🌡️';
+  const c = parseInt(code);
+  if (c >= 200 && c < 300) return '⛈️';
+  if (c >= 300 && c < 400) return '🌦️';
+  if (c >= 500 && c < 600) return '🌧️';
+  if (c >= 600 && c < 700) return '❄️';
+  if (c >= 700 && c < 800) return '🌫️';
+  if (c === 800)            return '☀️';
+  if (c > 800)              return '⛅';
+  return '🌡️';
+}
+
+function isSafe(data) {
+  const wind = data.wind?.speed || 0;
+  const vis  = data.visibility || 10000;
+  const code = data.weather?.[0]?.id || 800;
+  if (wind > 15 || vis < 2000 || (code >= 200 && code < 300) || (code >= 600 && code < 700)) return false;
+  return true;
+}
+
+function renderWeather(data, fcData) {
+  document.getElementById('weather-loading').style.display = 'none';
+  document.getElementById('weather-content').style.display = 'block';
+
+  const code = data.weather?.[0]?.id;
+  document.getElementById('w-icon').textContent     = weatherIcon(code);
+  document.getElementById('w-desc').textContent     = data.weather?.[0]?.description || '—';
+  document.getElementById('w-temp').textContent     = `${Math.round(data.main?.temp)}°C`;
+  document.getElementById('w-wind').textContent     = `${Math.round((data.wind?.speed||0)*3.6)} কি.মি/ঘ`;
+  document.getElementById('w-humidity').textContent = `${data.main?.humidity}%`;
+  document.getElementById('w-vis').textContent      = `${((data.visibility||0)/1000).toFixed(1)} কি.মি`;
+  document.getElementById('w-feels').textContent    = `${Math.round(data.main?.feels_like)}°C`;
+
+  const safe = isSafe(data);
+  document.getElementById('w-safe-badge').innerHTML = `
+    <div class="safe-badge" style="background:rgba(${safe?'0,200,160':'232,64,64'},.12);border:1px solid rgba(${safe?'0,200,160':'232,64,64'},.35);color:${safe?'var(--teal)':'var(--danger)'}">
+      ${safe ? '✅ নৌচলাচলের জন্য নিরাপদ' : '🚫 চলাচল এড়িয়ে চলুন'}
+    </div>`;
+
+  // alert
+  const alertBox = document.getElementById('weather-alert-box');
+  if (!safe) {
+    alertBox.innerHTML = `<div class="alert alert-danger">⚠️ <div><strong>সতর্কতা!</strong> বর্তমান আবহাওয়া নৌচলাচলের জন্য বিপজ্জনক। বাতাসের গতি ${Math.round((data.wind?.speed||0)*3.6)} কি.মি/ঘ।</div></div>`;
+  } else alertBox.innerHTML = '';
+
+  // forecast
+  if (fcData?.list) {
+    const days = {};
+    fcData.list.forEach(item => {
+      const d = item.dt_txt.split(' ')[0];
+      if (!days[d]) days[d] = item;
+    });
+    const dayNames = ['আজ','কাল','পরশু','তারপর','তার পরদিন'];
+    const list = Object.values(days).slice(0,5);
+    document.getElementById('forecast-list').innerHTML = list.map((item, i) => `
+      <div class="stat-row">
+        <span class="stat-label">${dayNames[i] || d}</span>
+        <span>${weatherIcon(item.weather?.[0]?.id)}</span>
+        <span class="stat-val">${Math.round(item.main?.temp)}°C</span>
+      </div>`).join('');
+  }
+}
+
+function renderDemoWeather() {
+  document.getElementById('weather-loading').style.display = 'none';
+  document.getElementById('weather-content').style.display = 'block';
+  document.getElementById('w-icon').textContent     = '⛅';
+  document.getElementById('w-desc').textContent     = 'আংশিক মেঘলা (Demo)';
+  document.getElementById('w-temp').textContent     = '28°C';
+  document.getElementById('w-wind').textContent     = '18 কি.মি/ঘ';
+  document.getElementById('w-humidity').textContent = '72%';
+  document.getElementById('w-vis').textContent      = '8.5 কি.মি';
+  document.getElementById('w-feels').textContent    = '31°C';
+  document.getElementById('w-safe-badge').innerHTML = `<div class="safe-badge" style="background:rgba(0,200,160,.12);border:1px solid rgba(0,200,160,.35);color:var(--teal)">✅ নৌচলাচলের জন্য নিরাপদ (Demo)</div>`;
+  document.getElementById('forecast-list').innerHTML = ['আজ','কাল','পরশু','তারপর','তার পরদিন'].map((d,i) => {
+    const icons = ['⛅','🌧️','☀️','⛈️','⛅'];
+    const temps = [28,26,31,24,27];
+    return `<div class="stat-row"><span class="stat-label">${d}</span><span>${icons[i]}</span><span class="stat-val">${temps[i]}°C</span></div>`;
+  }).join('');
+}
+
+function updateStatusBar(data) {
+  document.getElementById('sb-weather').textContent =
+    `আবহাওয়া: ${data.weather?.[0]?.description || '—'}, ${Math.round(data.main?.temp)}°C`;
+}
+
+// ── Flood ──────────────────────────────────────────────────────────────────
+async function loadFlood() {
+  // Using Open-Meteo for river discharge data (free, no key needed)
+  try {
+    const res  = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${currentLat}&longitude=${currentLng}&daily=precipitation_sum,rain_sum&timezone=auto&forecast_days=5`);
+    const data = await res.json();
+    renderFlood(data);
+  } catch(e) {
+    renderDemoFlood();
+  }
+}
+
+function renderFlood(data) {
+  const rain = data?.daily?.precipitation_sum?.[0] || 0;
+  let level, color, icon, pct;
+  if (rain < 5)       { level='স্বাভাবিক';       color='#00c8a0'; icon='✅'; pct=20; }
+  else if (rain < 20) { level='সতর্ক';            color='#f0a500'; icon='⚠️'; pct=50; }
+  else if (rain < 50) { level='বিপদজনক';          color='#e84040'; icon='🚨'; pct=75; }
+  else                { level='অতি বিপদজনক';     color='#9b0000'; icon='🆘'; pct=93; }
+
+  document.getElementById('flood-status').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="font-size:28px">${icon}</span>
+      <div>
+        <div style="font-size:18px;font-weight:800;color:${color}">${level}</div>
+        <div style="font-size:12px;color:var(--muted)">বৃষ্টিপাত: ${rain.toFixed(1)} মি.মি</div>
+      </div>
+    </div>`;
+
+  // 5-day rain forecast
+  const rains = data?.daily?.precipitation_sum || [0,0,0,0,0];
+  const days  = ['আজ','কাল','পরশু','তারপর','পরদিন'];
+  document.getElementById('flood-gauge').innerHTML = days.map((d,i) => {
+    const r = rains[i] || 0;
+    const p = Math.min((r/60)*100, 100);
+    const c = r < 5 ? '#00c8a0' : r < 20 ? '#f0a500' : '#e84040';
+    return `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+        <span style="color:var(--muted)">${d}</span>
+        <span style="font-family:var(--font-mono);color:${c}">${r.toFixed(1)} মি.মি</span>
+      </div>
+      <div class="flood-bar-track"><div class="flood-bar-fill" style="width:${p}%;background:${c}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+function renderDemoFlood() {
+  document.getElementById('flood-status').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:28px">✅</span>
+      <div>
+        <div style="font-size:18px;font-weight:800;color:var(--teal)">স্বাভাবিক (Demo)</div>
+        <div style="font-size:12px;color:var(--muted)">বৃষ্টিপাত: ৩.২ মি.মি</div>
+      </div>
+    </div>`;
+  const days = ['আজ','কাল','পরশু','তারপর','পরদিন'];
+  const vals = [3.2, 8.5, 22, 12, 4];
+  document.getElementById('flood-gauge').innerHTML = days.map((d,i) => {
+    const p = Math.min((vals[i]/60)*100,100);
+    const c = vals[i]<5?'#00c8a0':vals[i]<20?'#f0a500':'#e84040';
+    return `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--muted)">${d}</span><span style="font-family:var(--font-mono);color:${c}">${vals[i]} মি.মি</span></div><div class="flood-bar-track"><div class="flood-bar-fill" style="width:${p}%;background:${c}"></div></div></div>`;
+  }).join('');
+}
+
+// ── Route ──────────────────────────────────────────────────────────────────
+async function planRoute() {
+  const from   = document.getElementById('route-from').value.trim();
+  const to     = document.getElementById('route-to').value.trim();
+  const vessel = document.getElementById('vessel-type').value;
+  const depart = document.getElementById('depart-time').value;
+  if (!from || !to) { alert('শুরু ও গন্তব্য পয়েন্ট দিন!'); return; }
+
+  document.getElementById('route-btn').textContent = '⏳ বিশ্লেষণ চলছে...';
+  document.getElementById('route-btn').disabled = true;
+
+  // Draw a sample polyline on map
+  const pts = [
+    [currentLat, currentLng],
+    [currentLat + 0.15, currentLng + 0.1],
+    [currentLat + 0.3, currentLng + 0.25],
+  ];
+  if (map._routeLine) map.removeLayer(map._routeLine);
+  map._routeLine = L.polyline(pts, { color:'#f0a500', weight:4, dashArray:'8 5', opacity:.85 }).addTo(map);
+  map.fitBounds(map._routeLine.getBounds(), { padding:[30,30] });
+
+  // AI route analysis
+  let analysis = '';
+  if (!DEMO_MODE && CLAUDE_KEY) {
+    const weatherCtx = currentWeather
+      ? `বর্তমান আবহাওয়া: ${currentWeather.weather?.[0]?.description}, তাপমাত্রা ${Math.round(currentWeather.main?.temp)}°C, বাতাস ${Math.round((currentWeather.wind?.speed||0)*3.6)} কি.মি/ঘণ্টা।`
+      : '';
+    analysis = await callClaude(`তুমি একজন বাংলাদেশের বিশেষজ্ঞ নদী নেভিগেটর। ${weatherCtx} "${from}" থেকে "${to}" পর্যন্ত ${vessel}-এ ${depart} যাত্রার জন্য সংক্ষিপ্ত রুট পরামর্শ দাও। বাংলায় ৩-৪ বাক্যে বলো।`);
+  } else {
+    analysis = `"${from}" থেকে "${to}" রুটটি ${vessel}-এর জন্য উপযুক্ত। ${depart} যাত্রা করলে মূল চ্যানেল ধরে যাওয়া নিরাপদ হবে। চরের কাছাকাছি গতি কমিয়ে রাখুন এবং জোয়ার-ভাটা মনে রাখুন।`;
+  }
+
+  const dist = (Math.random()*60+20).toFixed(0);
+  const hrs  = (dist/20).toFixed(1);
+  const safe = currentWeather ? isSafe(currentWeather) : true;
+
+  document.getElementById('route-result').style.display = 'block';
+  document.getElementById('route-result-content').innerHTML = `
+    <div class="route-point">
+      <div class="route-dot" style="background:var(--teal)"></div>
+      <span style="font-size:13px"><strong>${from}</strong></span>
+    </div>
+    <div class="route-line" style="margin-left:4px"></div>
+    <div class="route-point">
+      <div class="route-dot" style="background:var(--danger)"></div>
+      <span style="font-size:13px"><strong>${to}</strong></span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0">
+      <div class="weather-cell"><div class="weather-cell-label">📏 দূরত্ব</div><div class="weather-cell-val">~${dist} কি.মি</div></div>
+      <div class="weather-cell"><div class="weather-cell-label">⏱️ সময়</div><div class="weather-cell-val">~${hrs} ঘণ্টা</div></div>
+      <div class="weather-cell"><div class="weather-cell-label">🚢 যান</div><div class="weather-cell-val">${vessel}</div></div>
+      <div class="weather-cell"><div class="weather-cell-label">🕐 যাত্রা</div><div class="weather-cell-val">${depart}</div></div>
+    </div>
+    <div style="background:rgba(0,200,160,.06);border-radius:8px;padding:10px;font-size:12px;line-height:1.8;color:var(--muted);border:1px solid var(--border)">
+      🤖 <strong style="color:var(--teal)">AI বিশ্লেষণ:</strong><br/>${analysis}
+    </div>
+    <div class="safe-badge" style="background:rgba(${safe?'0,200,160':'232,64,64'},.12);border:1px solid rgba(${safe?'0,200,160':'232,64,64'},.35);color:${safe?'var(--teal)':'var(--danger)'};margin-top:10px">
+      ${safe ? '✅ আবহাওয়া অনুকূল — যাত্রা করুন' : '⚠️ আবহাওয়া প্রতিকূল — সতর্কতা নিন'}
+    </div>`;
+
+  document.getElementById('route-btn').textContent = '🗺️ রুট বিশ্লেষণ করুন';
+  document.getElementById('route-btn').disabled = false;
+}
+
+// ── Claude AI ──────────────────────────────────────────────────────────────
+async function callClaude(prompt) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:400,
+        system:'তুমি একজন বাংলাদেশের অভিজ্ঞ নদী নেভিগেশন বিশেষজ্ঞ। সংক্ষিপ্ত, সরাসরি এবং কার্যকরী পরামর্শ দাও। সবসময় বাংলায় উত্তর দাও।',
+        messages:[{ role:'user', content:prompt }]
+      })
+    });
+    const data = await res.json();
+    return data.content?.[0]?.text || 'উত্তর পাওয়া যায়নি।';
+  } catch(e) {
+    return 'AI সংযোগে সমস্যা হয়েছে। পরে আবার চেষ্টা করুন।';
+  }
+}
+
+// ── Chat ───────────────────────────────────────────────────────────────────
+const DEMO_RESPONSES = {
+  'আবহাওয়া': 'বর্তমান আবহাওয়া নৌচলাচলের জন্য অনুকূল। বাতাসের গতি স্বাভাবিক। তবে বিকেলে হালকা বৃষ্টির সম্ভাবনা আছে।',
+  'বন্যা':    'বর্তমানে বন্যার ঝুঁকি কম। উজানে স্বাভাবিক বৃষ্টিপাত হচ্ছে। তবে আগামী ৩ দিনে ভারী বৃষ্টির পূর্বাভাস থাকায় সতর্ক থাকুন।',
+  'রুট':      'মূল চ্যানেল ধরে চলুন। চরের কাছাকাছি গতি কমান। জোয়ারের সময় মনে রাখুন এবং স্থানীয় নাবিকদের পরামর্শ নিন।',
+  'রাতে':     'রাতে চলাচলে সঠিক আলো ব্যবহার করুন। কুয়াশায় গতি কমান। হর্ন দিতে থাকুন এবং GPS ব্যবহার করুন।',
+  'নিরাপত্তা':'সবসময় লাইফ জ্যাকেট পরুন। পরিবারকে রুট জানান। ফুল চার্জের মোবাইল রাখুন। জরুরি: কোস্ট গার্ড ☎ ১৮১২৪।',
+};
+
+function getDemoResponse(msg) {
+  for (const [key, val] of Object.entries(DEMO_RESPONSES)) {
+    if (msg.includes(key)) return val;
+  }
+  return 'নদী নেভিগেশন, আবহাওয়া, বন্যা বা নিরাপত্তা সম্পর্কে জিজ্ঞেস করুন। আমি সাহায্য করতে প্রস্তুত!';
+}
+
+function addMessage(text, role) {
+  const container = document.getElementById('chat-messages');
+  const time = new Date().toLocaleTimeString('bn-BD', { hour:'2-digit', minute:'2-digit' });
+  const div = document.createElement('div');
+  div.className = `msg msg-${role}`;
+  div.innerHTML = `${role==='ai'?'🤖 ':''}${text}<div class="msg-time">${time}</div>`;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addTyping() {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-ai'; div.id = 'typing-indicator';
+  div.innerHTML = '🤖 <span class="typing-dots"><span>●</span><span>●</span><span>●</span></span>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function removeTyping() {
+  const t = document.getElementById('typing-indicator');
+  if (t) t.remove();
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg   = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  addMessage(msg, 'user');
+  addTyping();
+  document.getElementById('ai-status').textContent = 'লিখছে...';
+
+  let reply;
+  if (!DEMO_MODE && CLAUDE_KEY) {
+    const weatherCtx = currentWeather
+      ? `বর্তমান আবহাওয়া: ${currentWeather.weather?.[0]?.description}, তাপমাত্রা ${Math.round(currentWeather.main?.temp)}°C, বাতাস ${Math.round((currentWeather.wind?.speed||0)*3.6)} কি.মি/ঘ।`
+      : '';
+    reply = await callClaude(`${weatherCtx} নদী: ${getRiverName()}। প্রশ্ন: ${msg}`);
+  } else {
+    await new Promise(r => setTimeout(r, 800 + Math.random()*600));
+    reply = getDemoResponse(msg);
+  }
+
+  removeTyping();
+  addMessage(reply, 'ai');
+  document.getElementById('ai-status').textContent = 'প্রস্তুত';
+}
+
+function sendChip(text) {
+  document.getElementById('chat-input').value = text;
+  sendChat();
+}
+
+// ── Tab Switch ─────────────────────────────────────────────────────────────
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>
